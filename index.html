@@ -367,6 +367,18 @@ svg.i { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-widt
 .stage-title:hover { background: var(--surface); box-shadow: var(--shadow-sm); }
 .stage-title:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--border), var(--shadow-sm); }
 @media (max-width: 1180px) { .stage-title { display: none; } }
+.palette-row {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border: none; background: none; border-radius: 9px;
+    cursor: pointer; text-align: left; font-size: 12.5px; font-weight: 500;
+    transition: background .12s var(--ease);
+}
+.palette-row:hover { background: var(--hover); }
+.palette-row.active { background: var(--focus-soft); }
+.palette-row span.pn { flex: 1; }
+.palette-dots { display: flex; }
+.palette-dots i { width: 14px; height: 14px; border-radius: 50%; margin-left: -4px; border: 2px solid var(--surface); }
+.palette-dots i:first-child { margin-left: 0; }
 .empty-hint {
     position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
     z-index: 2; pointer-events: none; text-align: center;
@@ -629,6 +641,10 @@ kbd {
                     </div>
                 </div>
                 <div class="group">
+                    <div class="group-label">색 조합 <button class="link-btn" id="rerollBtn2" style="font-size:11px">🎲 랜덤</button></div>
+                    <div id="paletteList"></div>
+                </div>
+                <div class="group">
                     <div class="group-label">템플릿으로 시작</div>
                     <div id="templateList"></div>
                 </div>
@@ -717,6 +733,8 @@ kbd {
                 <button class="tool toggle" id="toggleSnap" data-icon="magnet" data-tip="스냅 (Alt 누르면 해제)"></button>
                 <button class="tool toggle hide-sm" id="toggleDims" data-icon="scan" data-tip="벽까지 거리 표시"></button>
                 <button class="tool toggle hide-sm" id="toggleCollide" data-icon="alert" data-tip="겹침 경고"></button>
+                <div class="tool-sep"></div>
+                <button class="tool" id="rerollBtn" data-icon="dice" data-tip="색 조합 리롤 (C)"></button>
                 <div class="tool-sep"></div>
                 <button class="tool" id="zoomOut" data-icon="minus" data-tip="축소"></button>
                 <button class="tool zoom-label" id="zoomReset" data-tip="100%로">100%</button>
@@ -863,6 +881,7 @@ kbd {
             <div class="kbd-row">선택 해제<kbd>Esc</kbd></div>
             <div class="kbd-row">줄자 / 선택<kbd>M / V</kbd></div>
             <div class="kbd-row">그리드<kbd>G</kbd></div>
+            <div class="kbd-row">색 조합 리롤<kbd>C</kbd></div>
             <div class="kbd-row">화면 맞춤<kbd>F</kbd></div>
             <div class="kbd-row">이미지 저장<kbd>Ctrl+S</kbd></div>
             <div class="kbd-row">스냅 잠시 끄기<kbd>Alt+드래그</kbd></div>
@@ -908,6 +927,7 @@ const ICONS = {
     image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>',
     file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    dice: '<rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor"/>',
     sparkle: '<path d="M12 2C12 7.5 16.5 12 22 12C16.5 12 12 16.5 12 22C12 16.5 7.5 12 2 12C7.5 12 12 7.5 12 2Z"/>'
 };
 const icon = (n) => `<svg class="i" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`;
@@ -2281,6 +2301,69 @@ const TEMPLATES = [
         })
     }
 ];
+/* ================= 색 조합 리롤 ================= */
+const PALETTES = [
+    { name: '딸기우유', c: ['#ec6f9e', '#f4978e', '#b98af5', '#f2ae4f', '#6fbfe3', '#79c98f'] },
+    { name: '솜사탕', c: ['#f28ac2', '#7faef5', '#ae92f0', '#f5bd5c', '#5fcab8', '#f38b8b'] },
+    { name: '라벤더 드림', c: ['#9b87f5', '#d08be8', '#6f9cf0', '#f08fb8', '#6ec6cf', '#e9b75a'] },
+    { name: '복숭아', c: ['#f5936e', '#f5a95a', '#ee8397', '#dcb452', '#8cc47b', '#6fa9d6'] },
+    { name: '민트초코', c: ['#2fb592', '#62c7c0', '#a07a62', '#5aa6d6', '#98bf5e', '#e2907a'] },
+    { name: '레몬소다', c: ['#e3b51f', '#7cc95a', '#4db3e6', '#f08466', '#a985ef', '#4fc3a0'] },
+    { name: '바닷가', c: ['#3f9be0', '#48c2bb', '#7788ef', '#f0ad5d', '#76c492', '#e583a4'] },
+    { name: '차분한 뉴트럴', c: ['#a08c73', '#78a08f', '#8490b8', '#b98b8b', '#a4a282', '#7fa2ab'] }
+];
+let paletteIdx = -1;
+const palFill = (c) => mix(c, '#ffffff', 0.84);
+
+function applyPalette(idx, shuffle) {
+    if (!state.items.length && !state.zones.length) { showToast('먼저 가구나 구역을 추가해 보세요'); return; }
+    pushHistory();
+    paletteIdx = idx;
+    const pal = PALETTES[idx].c.slice();
+    const offset = shuffle ? Math.floor(Math.random() * pal.length) : 0;
+    const pick = (i) => pal[(i + offset) % pal.length];
+    // 구역마다 다른 색
+    state.zones.forEach((z, i) => { z.color = pick(i * 2); });
+    // 가구는 자기가 속한 구역 색에서 시작해 옆 색으로 번갈아
+    const zoneOf = (it) => {
+        const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+        let best = -1, area = Infinity;
+        state.zones.forEach((z, i) => { if (cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h && z.w * z.h < area) { area = z.w * z.h; best = i; } });
+        return best;
+    };
+    const counters = {};
+    state.items.forEach((it, i) => {
+        if (it.id === 'door' || it.id === 'window') return;
+        const zi = zoneOf(it);
+        const k = zi < 0 ? 'none' : zi;
+        counters[k] = (counters[k] || 0) + 1;
+        const base = zi < 0 ? pick(i) : pick(zi * 2 + counters[k]);
+        if (isProp(it)) { it.stroke = base; it.color = palFill(base); return; }
+        it.color = palFill(base);
+        it.stroke = base;
+    });
+    updateAll();
+    renderPalettes();
+    showToast(`색 조합: ${PALETTES[idx].name}`);
+}
+function rerollPalette() {
+    let idx;
+    do { idx = Math.floor(Math.random() * PALETTES.length); } while (PALETTES.length > 1 && idx === paletteIdx);
+    applyPalette(idx, true);
+}
+function renderPalettes() {
+    const el = $('paletteList');
+    if (!el) return;
+    el.innerHTML = '';
+    PALETTES.forEach((p, i) => {
+        const b = document.createElement('button');
+        b.className = 'palette-row' + (i === paletteIdx ? ' active' : '');
+        b.innerHTML = `<span class="pn">${p.name}</span><span class="palette-dots">${p.c.map(c => `<i style="background:${c}"></i>`).join('')}</span>`;
+        b.addEventListener('click', () => applyPalette(i, false));
+        el.appendChild(b);
+    });
+}
+
 function renderTemplates() {
     const el = $('templateList');
     TEMPLATES.forEach(t => {
@@ -3418,6 +3501,7 @@ function bindEvents() {
         if (k === 'v') { setTool('select'); return; }
         if (k === 'm') { setTool(state.tool === 'measure' ? 'select' : 'measure'); return; }
         if (k === 'g') { $('toggleGrid').click(); return; }
+        if (k === 'c') { rerollPalette(); return; }
         if (k === 'f') { zoomToFit(); return; }
         if (k === '?') { $('helpModal').classList.add('show'); return; }
         if (state.sel.type === null) return;
@@ -3441,6 +3525,9 @@ function init() {
     document.querySelectorAll('[data-icon]').forEach(el => el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)));
     renderZoneButtons();
     renderTemplates();
+    renderPalettes();
+    $('rerollBtn').addEventListener('click', rerollPalette);
+    $('rerollBtn2').addEventListener('click', rerollPalette);
     bindEvents();
 
     const stored = loadStored();
