@@ -1302,10 +1302,11 @@ function drawProp(c, it, selected, ox, oy, scale, P, avoid, limitX) {
     c.fillStyle = it.stroke; c.fill();
     c.font = `${selected ? 600 : 400} 10px Pretendard, sans-serif`;
     c.textBaseline = 'middle';
-    c.fillStyle = selected ? P.sel : P.label;
+    const own = toHex(it.stroke);
+    c.fillStyle = selected ? P.sel : (own && lum(own) < 0.78 && P.roomFill === '#ffffff' ? mix(own, '#000000', 0.18) : P.label);
     // 벽 밖으로 넘치면 점 왼쪽에 이름 표시
     const tw = c.measureText(it.name).width;
-    if (limitX && cx + 8 + tw > limitX) { c.textAlign = 'right'; c.fillText(it.name, cx - 6, cy + 0.5); }
+    if (it.al === 'r' || (limitX && cx + 8 + tw > limitX)) { c.textAlign = 'right'; c.fillText(it.name, cx - 6, cy + 0.5); }
     else { c.textAlign = 'left'; c.fillText(it.name, cx + 6, cy + 0.5); }
 }
 
@@ -1317,8 +1318,8 @@ function drawItem(c, it, selected, bad, ox, oy, scale, P) {
     let w = it.w * scale, h = it.h * scale;
     const floor = isFloor(it);
 
-    const edge = selected ? P.sel : withA(it.stroke, '8c');
-    if (it.id === 'door' && it.w <= 1.6) {
+    const edge = selected ? P.sel : it.stroke;
+    if (it.id === 'door' && it.w <= 1.6 && it.h <= 0.2) {
         // 문: 얇은 판 + 가는 열림 궤적
         c.fillStyle = P.roomFill;
         c.fillRect(-w / 2, -h / 2, w, h);
@@ -1382,7 +1383,7 @@ function drawItem(c, it, selected, bad, ox, oy, scale, P) {
     }
     const fillHex = toHex(it.color) || '#ffffff';
     const strokeHex = toHex(it.stroke) || '#333333';
-    let textCol = mix(strokeHex, '#000000', 0.35);
+    let textCol = mix(strokeHex, '#000000', 0.22);
     if (lum(fillHex) < 0.5) textCol = '#ffffff';
     else if (lum(textCol) > 0.55) textCol = '#3f3f46';
     c.fillStyle = selected && lum(fillHex) >= 0.5 ? P.sel : textCol;
@@ -1396,11 +1397,31 @@ function drawItem(c, it, selected, bad, ox, oy, scale, P) {
             const lay = layoutLabel(c, text, bw - 10, bh - 4);
             if (lay) {
                 const lh = lay.size * 1.25;
-                const showDims = !turned && bh >= lay.lines.length * lh + 18 && bw > 44;
-                const total = lay.lines.length * lh + (showDims ? 13 : 0);
+                let subLay = null;
+                if (it.sub && !turned) {
+                    const room = bh - lay.lines.length * lh - 6;
+                    for (const sz of [9.5, 8.5]) {
+                        c.font = `400 ${sz}px Pretendard, sans-serif`;
+                        const words = it.sub.split(' ');
+                        const lines = []; let cur = '';
+                        for (const wd of words) { const t = cur ? cur + ' ' + wd : wd; if (c.measureText(t).width <= bw - 12 || !cur) cur = t; else { lines.push(cur); cur = wd; } }
+                        if (cur) lines.push(cur);
+                        if (lines.length * sz * 1.3 <= room && lines.every(l => c.measureText(l).width <= bw - 12)) { subLay = { lines, sz }; break; }
+                    }
+                }
+                const showDims = !subLay && !turned && bh >= lay.lines.length * lh + 18 && bw > 44;
+                const subH = subLay ? subLay.lines.length * subLay.sz * 1.3 + 3 : 0;
+                const total = lay.lines.length * lh + (showDims ? 13 : 0) + subH;
                 let y = -total / 2 + lh / 2;
                 c.font = `500 ${lay.size}px Pretendard, sans-serif`;
                 lay.lines.forEach(l => { c.fillText(l, 0, y + 0.5); y += lh; });
+                if (subLay) {
+                    c.font = `400 ${subLay.sz}px Pretendard, sans-serif`;
+                    c.globalAlpha = 0.75;
+                    y += 3 - lh / 2 + subLay.sz * 0.65;
+                    subLay.lines.forEach(l => { c.fillText(l, 0, y); y += subLay.sz * 1.3; });
+                    c.globalAlpha = 1;
+                }
                 if (showDims) {
                     c.font = '400 9.5px Pretendard, sans-serif';
                     c.globalAlpha = 0.5;
@@ -1976,7 +1997,9 @@ function normalizeScene(d) {
             name: it.name || (cat && cat.name) || '가구',
             x: +it.x || 0, y: +it.y || 0, w: Math.max(0.05, +it.w || (cat ? cat.w : 1)), h: Math.max(0.05, +it.h || (cat ? cat.h : 1)),
             r: ((+it.r || 0) % 360 + 360) % 360, color: pair.color, stroke: pair.stroke, locked: !!it.locked,
-            ...(it.note ? { note: String(it.note) } : {})
+            ...(it.note ? { note: String(it.note) } : {}),
+            ...(it.sub ? { sub: String(it.sub) } : {}),
+            ...(it.al ? { al: it.al } : {})
         });
     });
     (d.zones || []).forEach(z => {
@@ -2358,6 +2381,7 @@ const Importer = (() => {
         let name = attr(el, K.name) || ownText(el);
         const cat = /^prop$/i.test(typeVal) ? null : findCatalog(typeVal && !/^(item|furniture|true|custom|기타)$/i.test(typeVal) ? typeVal : '') || findCatalog(name) || (typeof el.className === 'string' ? findCatalog(el.className) : null);
         const note = (attr(el, ['data-note', 'note', 'data-desc', 'data-memo', 'data-description']) || '').trim().slice(0, 300);
+        const sub = (attr(el, ['data-sub']) || '').trim();
         if (!name) name = cat ? cat.name : (kind === 'zone' ? '구역' : '가구');
         const sz = sizePair(name);
         if (sz) { w = w ?? sz.w; h = h ?? sz.h; name = name.replace(/\(?\s*\d*\.?\d+\s*(cm|mm|m)?\s*[x×*]\s*\d*\.?\d+\s*(cm|mm|m)?\s*\)?/i, '').trim() || name; }
@@ -2369,7 +2393,7 @@ const Importer = (() => {
         }
         const pair = colorPair(attr(el, K.color) || (el.style && el.style.backgroundColor), attr(el, K.stroke) || (el.style && el.style.borderColor));
         return {
-            kind, id: /^prop$/i.test(typeVal) ? 'prop' : (cat ? cat.id : 'custom'), name, note,
+            kind, id: /^prop$/i.test(typeVal) ? 'prop' : (cat ? cat.id : 'custom'), name, note, sub,
             x, y, w: w ?? (cat ? cat.w : 1), h: h ?? (cat ? cat.h : 1), r: r || 0,
             color: pair ? pair.color : (cat ? cat.color : null), stroke: pair ? pair.stroke : (cat ? cat.stroke : null)
         };
@@ -2471,7 +2495,8 @@ const Importer = (() => {
             const w = px(st.width, P.w), h = px(st.height, P.h);
             const fs = parseFloat(st.fontSize) || 11;
             const txt = textLines(el)[0] || '';
-            const ew = w ?? Math.min(P.w || 200, txt.length * fs * 0.6 + 4), eh = h ?? fs * 1.3;
+            const tlen = [...txt].reduce((a, ch) => a + (/[\u3131-\uD79D]/.test(ch) ? 1 : 0.58), 0);
+            const ew = w ?? Math.min(P.w || 200, tlen * fs + 4), eh = h ?? fs * 1.3;
             const l = px(st.left, P.w), r = px(st.right, P.w), t = px(st.top, P.h), b = px(st.bottom, P.h);
             let x = l != null ? l : (r != null && P.w != null ? P.w - r - ew : 0);
             let y = t != null ? t : (b != null && P.h != null ? P.h - b - eh : 0);
@@ -2561,15 +2586,16 @@ const Importer = (() => {
                 if (pick) { const ls = textLines(pick); name = ls[0]; extraOwn.push(...ls.slice(1)); rest = rest.filter(t => t !== pick); }
             }
             inf.name = clean(name);
-            inf.notes.push(...extraOwn.map(clean));
             const isItem = el !== room && kinds.get(el) === 'item';
+            if (isItem) inf.sub = extraOwn.map(clean).join(' ');
+            else inf.notes.push(...extraOwn.map(clean));
             rest.forEach((t, i) => {
                 const ls = textLines(t);
                 if (el === room && !title && !MARK.test(ls[0]) && ls[0].length > 3 && (parseFloat(t.style.fontSize) >= 13 || G(t).y < 30)) { title = ls.join(' '); return; }
-                if (isItem) { inf.notes.push(...ls.map(clean)); return; }
                 const g = G(t);
                 const col = t.style.color || (t.querySelector('[style*="color"]') || {}).style?.color;
-                props.push({ name: clean(ls[0]), note: ls.slice(1).map(clean).join(' · '), x: g.x, y: g.y + g.eh / 2, color: col });
+                const rightAnchored = t.style.right !== '' && t.style.left === '';
+                props.push({ name: clean(ls[0]), note: ls.slice(1).map(clean).join(' · '), x: rightAnchored ? g.x + g.ew : g.x, y: g.y + g.eh / 2, color: col, al: rightAnchored ? 'r' : undefined });
             });
             const dn = el.getAttribute && (el.getAttribute('data-note') || el.getAttribute('title'));
             if (dn) inf.notes.unshift(dn.trim());
@@ -2631,13 +2657,13 @@ const Importer = (() => {
                 const cat = findCatalog(inf.name);
                 const pair = colorPair(el.style.backgroundColor && bgAlpha(el) >= 0.35 ? el.style.backgroundColor : null, el.style.borderColor || el.style.borderLeftColor || null)
                     || (cat ? { color: cat.color, stroke: cat.stroke } : null);
-                objs.push({ kind, id: cat ? cat.id : 'custom', name: inf.name || (cat ? cat.name : '가구'), x: m(g.x), y: m(g.y), w: m(g.w), h: m(g.h), r, color: pair && pair.color, stroke: pair && pair.stroke, note: noteTxt });
+                objs.push({ kind, id: cat ? cat.id : 'custom', name: inf.name || (cat ? cat.name : '가구'), sub: inf.sub || '', x: m(g.x), y: m(g.y), w: m(g.w), h: m(g.h), r, color: pair && pair.color, stroke: pair && pair.stroke, note: noteTxt });
             }
         });
         props.forEach(pr => {
             if (!pr.name) return;
             const pair = colorPair(pr.color) || { color: '#e5e5e5', stroke: '#71717a' };
-            objs.push({ kind: 'item', id: 'prop', name: pr.name.slice(0, 40), note: pr.note, x: m(pr.x) - 0.04, y: m(pr.y) - 0.1, w: 0.2, h: 0.2, r: 0, color: pair.color, stroke: pair.stroke });
+            objs.push({ kind: 'item', id: 'prop', al: pr.al, name: pr.name.slice(0, 40), note: pr.note, x: m(pr.x) - 0.04, y: m(pr.y) - 0.1, w: 0.2, h: 0.2, r: 0, color: pair.color, stroke: pair.stroke });
         });
         return { room: { w: m(W), h: m(H) }, title: title || docTitle(doc), source: 'HTML 도면', objs, extraNotes: note };
     }
@@ -2769,6 +2795,8 @@ const Importer = (() => {
         items.forEach(o => {
             const colors = o.color && o.stroke ? { color: o.color, stroke: o.stroke } : hashColor(o.name);
             const it = { uid: uid(), id: o.id, name: o.name, w: Math.max(0.05, o.w), h: Math.max(0.05, o.h), r: ((o.r || 0) % 360 + 360) % 360, color: colors.color, stroke: colors.stroke, x: o.x, y: o.y };
+            if (o.sub) it.sub = o.sub;
+            if (o.al) it.al = o.al;
             if (o.note) it.note = o.note;
             sc.items.push(it);
             if (o.x == null || o.y == null) { it.x = null; it.y = null; pendingItems.push(it); }
@@ -2852,7 +2880,7 @@ function sceneToHTML(sc) {
         lines.push(`  <div data-zone data-name="${escapeHtml(z.name)}" data-x="${f(z.x)}" data-y="${f(z.y)}" data-w="${f(z.w)}" data-h="${f(z.h)}" data-color="${z.color}"${z.note ? ` data-note="${escapeHtml(z.note)}"` : ''} style="position:absolute;left:${Math.round(z.x * S)}px;top:${Math.round(z.y * S)}px;width:${Math.round(z.w * S)}px;height:${Math.round(z.h * S)}px;border:1.5px dashed ${z.color};background:${z.color}18;box-sizing:border-box;color:${z.color};font-weight:700;padding:4px 6px;">${escapeHtml(z.name)}</div>`);
     });
     sc.items.forEach(it => {
-        lines.push(`  <div data-furniture="${escapeHtml(it.id)}" data-name="${escapeHtml(it.name)}" data-x="${f(it.x)}" data-y="${f(it.y)}" data-w="${f(it.w)}" data-h="${f(it.h)}" data-r="${f(it.r || 0)}" data-color="${it.color}" data-stroke="${it.stroke}"${it.note ? ` data-note="${escapeHtml(it.note)}"` : ''} style="position:absolute;left:${Math.round(it.x * S)}px;top:${Math.round(it.y * S)}px;width:${Math.round(it.w * S)}px;height:${Math.round(it.h * S)}px;transform:rotate(${f(it.r || 0)}deg);background:${it.color};border:1.5px solid ${it.stroke};border-radius:4px;box-sizing:border-box;color:${it.stroke};font-weight:600;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;">${escapeHtml(it.name)}</div>`);
+        lines.push(`  <div data-furniture="${escapeHtml(it.id)}" data-name="${escapeHtml(it.name)}" data-x="${f(it.x)}" data-y="${f(it.y)}" data-w="${f(it.w)}" data-h="${f(it.h)}" data-r="${f(it.r || 0)}" data-color="${it.color}" data-stroke="${it.stroke}"${it.note ? ` data-note="${escapeHtml(it.note)}"` : ''}${it.sub ? ` data-sub="${escapeHtml(it.sub)}"` : ''} style="position:absolute;left:${Math.round(it.x * S)}px;top:${Math.round(it.y * S)}px;width:${Math.round(it.w * S)}px;height:${Math.round(it.h * S)}px;transform:rotate(${f(it.r || 0)}deg);background:${it.color};border:1.5px solid ${it.stroke};border-radius:4px;box-sizing:border-box;color:${it.stroke};font-weight:600;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;">${escapeHtml(it.name)}</div>`);
     });
     lines.push('</div>');
     return lines.join('\n');
