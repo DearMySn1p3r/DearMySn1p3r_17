@@ -1092,10 +1092,20 @@ function colorPair(fill, stroke) {
     return { color: mix(c, '#ffffff', lum(c) < 0.3 ? 0.88 : 0.82), stroke: c };
 }
 
+// 연한 파스텔은 검정을 섞으면 탁해지므로, 색감(hue)은 그대로 두고 채도·명도만 조정
 function zoneColor(c) {
     const h = toHex(c);
     if (!h) return null;
-    return lum(h) > 0.72 ? mix(h, '#000000', 0.45) : h;
+    if (lum(h) <= 0.72) return h;
+    let [r, g, b] = hexRgb(h).map(v => v / 255);
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    if (d < 0.06) return mix(h, '#000000', 0.45); // 회색 계열
+    let hue = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    hue *= 60; if (hue < 0) hue += 360;
+    const S = 0.62, L = 0.55;
+    const C = (1 - Math.abs(2 * L - 1)) * S, X = C * (1 - Math.abs((hue / 60) % 2 - 1)), m = L - C / 2;
+    const [r1, g1, b1] = hue < 60 ? [C, X, 0] : hue < 120 ? [X, C, 0] : hue < 180 ? [0, C, X] : hue < 240 ? [0, X, C] : hue < 300 ? [X, 0, C] : [C, 0, X];
+    return rgbHex((r1 + m) * 255, (g1 + m) * 255, (b1 + m) * 255);
 }
 function hashColor(name) {
     let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -1278,7 +1288,7 @@ function drawZoneTag(c, z, ox, oy, scale, P) {
     return { l: x + 3, t: y + 3, r: x + tw + 15, b: y + 23 };
 }
 
-function drawProp(c, it, selected, ox, oy, scale, P, avoid) {
+function drawProp(c, it, selected, ox, oy, scale, P, avoid, limitX) {
     const cx = ox + (it.x + it.w / 2) * scale;
     let cy = oy + (it.y + it.h / 2) * scale;
     // 구역 이름표와 겹치면 살짝 아래로
@@ -1291,9 +1301,12 @@ function drawProp(c, it, selected, ox, oy, scale, P, avoid) {
     c.beginPath(); c.arc(cx, cy, 2.6, 0, Math.PI * 2);
     c.fillStyle = it.stroke; c.fill();
     c.font = `${selected ? 600 : 400} 10px Pretendard, sans-serif`;
-    c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.textBaseline = 'middle';
     c.fillStyle = selected ? P.sel : P.label;
-    c.fillText(it.name, cx + 6, cy + 0.5);
+    // 벽 밖으로 넘치면 점 왼쪽에 이름 표시
+    const tw = c.measureText(it.name).width;
+    if (limitX && cx + 8 + tw > limitX) { c.textAlign = 'right'; c.fillText(it.name, cx - 6, cy + 0.5); }
+    else { c.textAlign = 'left'; c.fillText(it.name, cx + 6, cy + 0.5); }
 }
 
 function drawItem(c, it, selected, bad, ox, oy, scale, P) {
@@ -1481,7 +1494,7 @@ function renderScene(c, sc, ox, oy, scale, opts = {}) {
     });
     const tags = sc.zones.map(z => drawZoneTag(c, z, ox, oy, scale, P)).filter(Boolean);
     // 소품(점 + 이름)은 구역 이름표 위에 보이도록 마지막에
-    sc.items.forEach((it, i) => { if (isProp(it)) drawProp(c, it, sel.type === 'item' && sel.idx === i, ox, oy, scale, P, tags); });
+    sc.items.forEach((it, i) => { if (isProp(it)) drawProp(c, it, sel.type === 'item' && sel.idx === i, ox, oy, scale, P, tags, ox + sc.roomW * scale - 4); });
     if (!opts.interactive) return;
 
     const obj = getSelectedObject();
