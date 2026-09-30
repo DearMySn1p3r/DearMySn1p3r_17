@@ -574,7 +574,6 @@ kbd {
                     <button class="menu-item" data-act="savehtml" data-icon="file">HTML 파일로 저장</button>
                     <button class="menu-item" data-act="json" data-icon="file">JSON 파일로 저장</button>
                     <div class="menu-sep"></div>
-                    <button class="menu-item" data-act="link" data-icon="link">공유 링크 복사</button>
                     <button class="menu-item" data-act="load" data-icon="upload">파일 불러오기 <small>.json .html</small></button>
                 </div>
             </div>
@@ -1407,9 +1406,10 @@ function drawItem(c, it, selected, bad, ox, oy, scale, P) {
     }
     const fillHex = toHex(it.color) || '#ffffff';
     const strokeHex = toHex(it.stroke) || '#333333';
-    let textCol = mix(strokeHex, '#000000', 0.22);
+    // 글자는 테두리 색감을 살려서 (연한 색이면 같은 색감으로 진하게)
+    let textCol = mix(zoneColor(strokeHex) || strokeHex, '#000000', 0.18);
     if (lum(fillHex) < 0.5) textCol = '#ffffff';
-    else if (lum(textCol) > 0.55) textCol = '#3f3f46';
+    else if (lum(textCol) > 0.6) textCol = '#3f3f46';
     c.fillStyle = selected && lum(fillHex) >= 0.5 ? P.sel : textCol;
     c.textAlign = 'center'; c.textBaseline = 'middle';
     {
@@ -1524,6 +1524,11 @@ function drawGuides(c, o, ox, oy, scale, sc, P) {
 }
 
 function renderScene(c, sc, ox, oy, scale, opts = {}) {
+    c.save();
+    try { renderSceneInner(c, sc, ox, oy, scale, opts); }
+    finally { c.restore(); }
+}
+function renderSceneInner(c, sc, ox, oy, scale, opts = {}) {
     const P = palette(opts.dark);
     drawRoom(c, sc, ox, oy, scale, P, opts.grid !== false);
     const sel = opts.sel || { type: null };
@@ -2333,7 +2338,7 @@ function applyPalette(idx, shuffle) {
     };
     const counters = {};
     state.items.forEach((it, i) => {
-        if (it.id === 'door' || it.id === 'window') return;
+        if ((it.id === 'door' || it.id === 'window') && it.h <= 0.2) return; // 얇은 문·창문만 그대로
         const zi = zoneOf(it);
         const k = zi < 0 ? 'none' : zi;
         counters[k] = (counters[k] || 0) + 1;
@@ -2479,6 +2484,7 @@ const Importer = (() => {
         const cat = /^prop$/i.test(typeVal) ? null : findCatalog(typeVal && !/^(item|furniture|true|custom|기타)$/i.test(typeVal) ? typeVal : '') || findCatalog(name) || (typeof el.className === 'string' ? findCatalog(el.className) : null);
         const note = (attr(el, ['data-note', 'note', 'data-desc', 'data-memo', 'data-description']) || '').trim().slice(0, 300);
         const sub = (attr(el, ['data-sub']) || '').trim();
+        const al = attr(el, ['data-al']) === 'r' ? 'r' : undefined;
         if (!name) name = cat ? cat.name : (kind === 'zone' ? '구역' : '가구');
         const sz = sizePair(name);
         if (sz) { w = w ?? sz.w; h = h ?? sz.h; name = name.replace(/\(?\s*\d*\.?\d+\s*(cm|mm|m)?\s*[x×*]\s*\d*\.?\d+\s*(cm|mm|m)?\s*\)?/i, '').trim() || name; }
@@ -2490,7 +2496,7 @@ const Importer = (() => {
         }
         const pair = colorPair(attr(el, K.color) || (el.style && el.style.backgroundColor), attr(el, K.stroke) || (el.style && el.style.borderColor));
         return {
-            kind, id: /^prop$/i.test(typeVal) ? 'prop' : (cat ? cat.id : 'custom'), name, note, sub,
+            kind, id: /^prop$/i.test(typeVal) ? 'prop' : (cat ? cat.id : 'custom'), name, note, sub, al,
             x, y, w: w ?? (cat ? cat.w : 1), h: h ?? (cat ? cat.h : 1), r: r || 0,
             color: pair ? pair.color : (cat ? cat.color : null), stroke: pair ? pair.stroke : (cat ? cat.stroke : null)
         };
@@ -2890,6 +2896,9 @@ const Importer = (() => {
             }
         }
         const sc = { roomW: Math.max(1, +W.toFixed(2)), roomH: Math.max(1, +H.toFixed(2)), title: parsed.title || '', items: [], zones: [] };
+        // 방보다 큰 가구/구역은 방 크기에 맞춤 (예: '999x999' 같은 잘못된 크기)
+        items.forEach(o => { o.w = Math.min(o.w, sc.roomW); o.h = Math.min(o.h, sc.roomH); });
+        zones.forEach(o => { o.w = Math.min(o.w, sc.roomW); o.h = Math.min(o.h, sc.roomH); });
         const pendingItems = [], pendingZones = [];
         items.forEach(o => {
             const colors = o.color && o.stroke ? { color: o.color, stroke: o.stroke } : hashColor(o.name);
@@ -2979,7 +2988,7 @@ function sceneToHTML(sc) {
         lines.push(`  <div data-zone data-name="${escapeHtml(z.name)}" data-x="${f(z.x)}" data-y="${f(z.y)}" data-w="${f(z.w)}" data-h="${f(z.h)}" data-color="${z.color}"${z.note ? ` data-note="${escapeHtml(z.note)}"` : ''} style="position:absolute;left:${Math.round(z.x * S)}px;top:${Math.round(z.y * S)}px;width:${Math.round(z.w * S)}px;height:${Math.round(z.h * S)}px;border:1.5px dashed ${z.color};background:${z.color}18;box-sizing:border-box;color:${z.color};font-weight:700;padding:4px 6px;">${escapeHtml(z.name)}</div>`);
     });
     sc.items.forEach(it => {
-        lines.push(`  <div data-furniture="${escapeHtml(it.id)}" data-name="${escapeHtml(it.name)}" data-x="${f(it.x)}" data-y="${f(it.y)}" data-w="${f(it.w)}" data-h="${f(it.h)}" data-r="${f(it.r || 0)}" data-color="${it.color}" data-stroke="${it.stroke}"${it.note ? ` data-note="${escapeHtml(it.note)}"` : ''}${it.sub ? ` data-sub="${escapeHtml(it.sub)}"` : ''} style="position:absolute;left:${Math.round(it.x * S)}px;top:${Math.round(it.y * S)}px;width:${Math.round(it.w * S)}px;height:${Math.round(it.h * S)}px;transform:rotate(${f(it.r || 0)}deg);background:${it.color};border:1.5px solid ${it.stroke};border-radius:4px;box-sizing:border-box;color:${it.stroke};font-weight:600;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;">${escapeHtml(it.name)}</div>`);
+        lines.push(`  <div data-furniture="${escapeHtml(it.id)}" data-name="${escapeHtml(it.name)}" data-x="${f(it.x)}" data-y="${f(it.y)}" data-w="${f(it.w)}" data-h="${f(it.h)}" data-r="${f(it.r || 0)}" data-color="${it.color}" data-stroke="${it.stroke}"${it.note ? ` data-note="${escapeHtml(it.note)}"` : ''}${it.sub ? ` data-sub="${escapeHtml(it.sub)}"` : ''}${it.al ? ` data-al="${it.al}"` : ''} style="position:absolute;left:${Math.round(it.x * S)}px;top:${Math.round(it.y * S)}px;width:${Math.round(it.w * S)}px;height:${Math.round(it.h * S)}px;transform:rotate(${f(it.r || 0)}deg);background:${it.color};border:1.5px solid ${it.stroke};border-radius:4px;box-sizing:border-box;color:${it.stroke};font-weight:600;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;">${escapeHtml(it.name)}</div>`);
     });
     lines.push('</div>');
     return lines.join('\n');
@@ -3035,6 +3044,7 @@ function exportImage() {
     // 범례
     if (legend.length) {
         const by = oy + roomH + 34;
+        c.textAlign = 'left';
         c.textBaseline = 'middle';
         legend.forEach(({ z, t1, t2, x, y }) => {
             const px = ox + x, py = by + y;
@@ -3077,18 +3087,6 @@ async function copyText(text, okMsg) {
         ta.remove();
     }
 }
-function encodeShare() {
-    const bytes = new TextEncoder().encode(snapshot());
-    let bin = ''; bytes.forEach(b => bin += String.fromCharCode(b));
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function decodeShare(s) {
-    s = s.replace(/-/g, '+').replace(/_/g, '/');
-    const bin = atob(s);
-    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
-}
-
 function handleExport(act) {
     $('exportDrop').classList.remove('open');
     if (act === 'png') exportImage();
@@ -3100,9 +3098,6 @@ function handleExport(act) {
     } else if (act === 'json') {
         download(new Blob([JSON.stringify(JSON.parse(snapshot()), null, 2)], { type: 'application/json' }), fileBase() + '.json');
         showToast('JSON 파일을 저장했어요');
-    } else if (act === 'link') {
-        const url = location.href.split('#')[0] + '#plan=' + encodeShare();
-        copyText(url, '공유 링크를 복사했어요');
     } else if (act === 'load') {
         pickFile('.json,.html,.htm,.txt', (text, name) => {
             if (/\.json$/i.test(name)) {
@@ -3363,8 +3358,8 @@ function bindEvents() {
     bindCommit($('inspNote'), v => { const o = getSelectedObject(); if (v.trim()) o.note = v; else delete o.note; });
     bindCommit($('inspW'), v => { const n = parseFloat(v); if (n >= 0.05) getSelectedObject().w = n; });
     bindCommit($('inspH'), v => { const n = parseFloat(v); if (n >= 0.05) getSelectedObject().h = n; });
-    bindCommit($('inspX'), v => { const n = parseFloat(v); if (!isNaN(n)) getSelectedObject().x = n; });
-    bindCommit($('inspY'), v => { const n = parseFloat(v); if (!isNaN(n)) getSelectedObject().y = n; });
+    bindCommit($('inspX'), v => { const n = parseFloat(v); if (!isNaN(n)) { const o = getSelectedObject(); o.x = placeWithBBox(o, n, o.y, true).x; } });
+    bindCommit($('inspY'), v => { const n = parseFloat(v); if (!isNaN(n)) { const o = getSelectedObject(); o.y = placeWithBBox(o, o.x, n, true).y; } });
     bindCommit($('inspRot'), v => { const n = parseFloat(v); if (!isNaN(n)) { getSelectedObject().r = ((n % 360) + 360) % 360; $('inspRotRange').value = n; } });
     bindCommit($('inspRotRange'), v => { getSelectedObject().r = +v; $('inspRot').value = v; });
     $('inspClose').addEventListener('click', () => select(null));
@@ -3541,12 +3536,6 @@ function init() {
     const prefersDark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
     setTheme(stored && stored.theme ? stored.theme : (prefersDark ? 'dark' : 'light'));
 
-    const hash = location.hash.match(/plan=([^&]+)/);
-    if (hash) {
-        try { scene = decodeShare(hash[1]); showToast('공유된 도면을 열었어요'); }
-        catch (e) { showToast('공유 링크를 읽을 수 없어요'); }
-        window.history.replaceState(null, '', location.pathname + location.search);
-    }
 
     renderLibrary();
     syncToggles();
